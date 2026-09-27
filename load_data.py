@@ -35,33 +35,39 @@ def initialize_database(database_path: Path, overwrite: bool = True):
     # Enable foreign keys
     cur.execute("PRAGMA foreign_keys = ON;")
 
-    # Create subject table
+    # Create subjects table
     cur.execute("""
-    CREATE TABLE IF NOT EXISTS subject (
-        id INTEGER PRIMARY KEY,
+    CREATE TABLE IF NOT EXISTS subjects (
+        id TEXT PRIMARY KEY,
         condition TEXT NOT NULL,
         age INTEGER NOT NULL,
         sex TEXT NOT NULL CHECK (sex IN ('M', 'F')),
         treatment TEXT NOT NULL,
-        response INTEGER CHECK (response IN (0, 1) OR response IS NULL),
-        project_id INTEGER NOT NULL
+        response TEXT CHECK (response IN ('yes', 'no') OR response IS NULL),
+        project TEXT NOT NULL
     );
     """)
 
-    # Create sample table
+    # Create samples table
     cur.execute("""
-    CREATE TABLE IF NOT EXISTS sample (
-        id INTEGER PRIMARY KEY,
+    CREATE TABLE IF NOT EXISTS samples (
+        id TEXT PRIMARY KEY,
         sample_type TEXT NOT NULL CHECK (sample_type IN ('PBMC','WB')),
         time_from_treatment_start INTEGER NOT NULL
             CHECK (time_from_treatment_start >= 0),
-        b_cell INTEGER NOT NULL CHECK (b_cell >= 0),
-        cd8_t_cell INTEGER NOT NULL CHECK (cd8_t_cell >= 0),
-        cd4_t_cell INTEGER NOT NULL CHECK (cd4_t_cell >= 0),
-        nk_cell INTEGER NOT NULL CHECK (nk_cell >= 0),
-        monocyte INTEGER NOT NULL CHECK (monocyte >= 0),
-        subject_id INTEGER NOT NULL,
-        FOREIGN KEY (subject_id) REFERENCES subject(id)
+        subject_id TEXT NOT NULL,
+        FOREIGN KEY (subject_id) REFERENCES subjects(id)
+    );
+    """)
+
+    # Create cell counts table
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS cell_counts (
+        sample_id TEXT NOT NULL,
+        population TEXT NOT NULL,
+        count INTEGER NOT NULL CHECK (count >= 0),
+        PRIMARY KEY (sample_id, population),
+        FOREIGN KEY (sample_id) REFERENCES samples(id)
     );
     """)
 
@@ -79,40 +85,32 @@ def populate_database(database_path: Path):
 
     df = pd.read_csv(CSV_PATH)
 
-    # Convert string ids to integers (e.g. "sbj001" -> 1)
-    for column in ["project", "subject", "sample"]:
-        df[column] = df[column].str.extract(r"(\d+)$", expand=False).astype(int)
-
-    # Convert response to 1/0 (SQLite bool), leaving missing values as NULL
-    df["response"] = df["response"].map({"yes": 1, "no": 0}).astype("Int64")
-
     # Split the data into subject and sample tables
     subjects = (
         df[["subject", "condition", "age", "sex", "treatment", "response", "project"]]
         .drop_duplicates()
-        .rename(columns={"subject": "id", "project": "project_id"})
+        .rename(columns={"subject": "id"})
     )
     samples = df[
-        [
-            "sample",
-            "sample_type",
-            "time_from_treatment_start",
-            "b_cell",
-            "cd8_t_cell",
-            "cd4_t_cell",
-            "nk_cell",
-            "monocyte",
-            "subject",
-        ]
+        ["sample", "sample_type", "time_from_treatment_start", "subject"]
     ].rename(columns={"sample": "id", "subject": "subject_id"})
+
+    # Unpivot the counts into one row per sample and population
+    cell_counts = df.melt(
+        id_vars="sample",
+        value_vars=["b_cell", "cd8_t_cell", "cd4_t_cell", "nk_cell", "monocyte"],
+        var_name="population",
+        value_name="count",
+    ).rename(columns={"sample": "sample_id"})
 
     # Connect to the database
     conn = sqlite3.connect(database_path)
     conn.execute("PRAGMA foreign_keys = ON;")
 
-    # Insert subjects first so sample foreign keys resolve
-    subjects.to_sql("subject", conn, if_exists="append", index=False)
-    samples.to_sql("sample", conn, if_exists="append", index=False)
+    # Insert parents first so foreign keys resolve
+    subjects.to_sql("subjects", conn, if_exists="append", index=False)
+    samples.to_sql("samples", conn, if_exists="append", index=False)
+    cell_counts.to_sql("cell_counts", conn, if_exists="append", index=False)
 
     conn.commit()
     conn.close()
