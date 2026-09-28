@@ -1,6 +1,6 @@
 # Decision Book
 
-## Part 1: Data Management
+## Data Management
 
 For the schema design, I split the data into two primary tables to avoid potential redundancy issues. 
 
@@ -15,3 +15,11 @@ I considered splitting enum types like condition into separate tables, but this 
 I considered adding an enrollment table with subject, project, treatment, and response, but since all subjects only have one treatment in this data, I kept it simple and skipped this.
 
 I kept the columns like sample as text, even though they could be represented as integers, since the problem descriptions indicate that the original column values should be returned.
+
+## Analysis
+
+I chose to use a Mann-Whitney U test since it doesn't assume that the frequencies are normally distributed and because it's robust to outliers. I used Benjamini-Hochberg correction since I run multiple tests over the cell population data and report significance. The chance that at least one test result is a false positive increases with the number of tests, so I apply the correction to control the false discovery rate (the expected proportion of false positives among results appearing to be significant).
+
+Each subject has up to three samples, and they are not independent, so I average over the population frequencies within each subject instead of using all three samples for each subject. 
+
+I also looked at using change from baseline as an early indicator of response, assuming that response is measured more than 14 days after the baseline. See the dashboard and analysis for more details on the approaches.
