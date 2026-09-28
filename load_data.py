@@ -3,12 +3,13 @@ from pathlib import Path
 
 import pandas as pd
 
+PARENT_FOLDER = Path(__file__).parent
 DATABASE_NAME = "cell-counts"
-CSV_PATH = Path("cell-count.csv")
+CSV_PATH = PARENT_FOLDER / "cell-count.csv"
 
 
 def database_path(database_name: str):
-    return Path(f"{database_name}.db")
+    return PARENT_FOLDER / f"{database_name}.db"
 
 
 def initialize_database(database_path: Path, overwrite: bool = True):

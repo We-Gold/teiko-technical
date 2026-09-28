@@ -11,9 +11,28 @@ def _():
     import sqlite3
     import pandas as pd
     import altair as alt
-    from scipy.stats import mannwhitneyu
+    from scipy.stats import false_discovery_control, mannwhitneyu
+    from sklearn.dummy import DummyClassifier
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.model_selection import RepeatedStratifiedKFold, cross_validate
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
 
-    return Path, alt, mannwhitneyu, mo, pd, sqlite3
+    return (
+        DummyClassifier,
+        LogisticRegression,
+        Path,
+        RepeatedStratifiedKFold,
+        StandardScaler,
+        alt,
+        cross_validate,
+        false_discovery_control,
+        make_pipeline,
+        mannwhitneyu,
+        mo,
+        pd,
+        sqlite3,
+    )
 
 
 @app.cell(hide_code=True)
@@ -94,11 +113,12 @@ def _(DATABASE_PATH, pd, sqlite3):
             SELECT
                 samples.id AS sample,
                 subjects.id AS subject,
-                response
+                response,
+                time_from_treatment_start
             FROM subjects
             JOIN samples ON samples.subject_id = subjects.id
-            WHERE treatment = 'miraclib' AND condition = 'melanoma'
-                AND sample_type = 'PBMC' AND time_from_treatment_start = 0;
+            WHERE treatment = 'miraclib' AND condition = 'melanoma' 
+                AND sample_type = 'PBMC' AND response IN ('yes', 'no');
             """,
             con=conn,
         )
@@ -123,9 +143,21 @@ def _(cell_freq, response_samples):
 
 
 @app.cell
-def _(alt, response_freq):
+def _(response_freq):
+    # Average each subject's samples so every subject contributes one independent
+    # value per population to the test (instead of 3)
+    subject_freq = response_freq.groupby(
+        ["subject", "response", "population"], as_index=False
+    )["percentage"].mean()
+
+    subject_freq
+    return (subject_freq,)
+
+
+@app.cell
+def _(alt, subject_freq):
     response_boxplots = (
-        alt.Chart(response_freq)
+        alt.Chart(subject_freq)
         .mark_boxplot()
         .encode(
             x=alt.X("response:N", title="Response", sort=["yes", "no"]),
@@ -154,7 +186,7 @@ def _(mo):
 
 
 @app.cell
-def _(mannwhitneyu, pd, response_freq):
+def _(false_discovery_control, mannwhitneyu, pd, subject_freq):
     def mann_whitney_by_population(df):
         rows = []
         for population, group in df.groupby("population"):
@@ -176,16 +208,177 @@ def _(mannwhitneyu, pd, response_freq):
                 }
             )
 
-        return pd.DataFrame(rows)
+        results = pd.DataFrame(rows)
 
-    mwu_results = mann_whitney_by_population(response_freq)
+        # Benjamini-Hochberg adjustment for testing five populations at once
+        results["p_value_bh"] = false_discovery_control(results["p_value"])
+
+        return results
+
+    mwu_results = mann_whitney_by_population(subject_freq)
 
     mwu_results
     return
 
 
 @app.cell(hide_code=True)
-def _():
+def _(mo):
+    mo.md(r"""
+    ### Additional analysis: change from baseline to day 14
+
+    Each subject has samples at days 0, 7, and 14. Instead of comparing raw frequencies,
+    compare each subject's change from their own baseline to day 14 (day 14 − day 0)
+    between responders and non-responders. This removes between-subject baseline
+    variation and tests whether miraclib shifts a population differently in
+    responders. If we assume response is assessed after day 14, then this is a potential predictor.
+
+    - $H_0$: the change in relative frequency from day 0 to day 14 has the same
+      distribution in responders and non-responders
+    - $H_1$: one group tends to have a larger change than the other
+    """)
+    return
+
+
+@app.cell
+def _(false_discovery_control, mannwhitneyu, pd, response_freq):
+    def change_from_baseline_tests(df):
+        # One row per subject and population, one column per day
+        by_day = df.pivot_table(
+            index=["subject", "response", "population"],
+            columns="time_from_treatment_start",
+            values="percentage",
+        )
+        change = (by_day[14] - by_day[0]).rename("change").reset_index()
+
+        rows = []
+        for population, group in change.groupby("population"):
+            yes = group.loc[group.response == "yes", "change"]
+            no = group.loc[group.response == "no", "change"]
+
+            u, p = mannwhitneyu(yes, no, alternative="two-sided")
+
+            rows.append(
+                {
+                    "population": population,
+                    "n_yes": len(yes),
+                    "n_no": len(no),
+                    "median_change_yes": yes.median(),
+                    "median_change_no": no.median(),
+                    "u_statistic": u,
+                    "p_value": p,
+                }
+            )
+
+        results = pd.DataFrame(rows)
+
+        # Benjamini-Hochberg adjustment for testing five populations at once
+        results["p_value_bh"] = false_discovery_control(results["p_value"])
+
+        return results
+
+    change_results = change_from_baseline_tests(response_freq)
+
+    change_results
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Additional analysis: predicting response
+
+    Train a logistic regression on the two most promising features to see how well
+    they predict response for an individual subject:
+
+    1. Change in B cell frequency from day 0 to day 14
+    2. Change in B cell frequency, plus average CD4 T cell frequency across days 0, 7, and 14
+
+    Performance is measured with stratified 5-fold cross-validation repeated 10 times,
+    and compared to a baseline that always predicts the most common class. Note that
+    these features were chosen by testing on this same data, so these scores are
+    likely optimistic.
+    """)
+    return
+
+
+@app.cell
+def _(
+    DummyClassifier,
+    LogisticRegression,
+    RepeatedStratifiedKFold,
+    StandardScaler,
+    cross_validate,
+    make_pipeline,
+    pd,
+    response_freq,
+    subject_freq,
+):
+    def response_classifier_scores():
+        # One row per subject with each candidate feature
+        b_cell = response_freq[response_freq.population == "b_cell"].pivot_table(
+            index=["subject", "response"],
+            columns="time_from_treatment_start",
+            values="percentage",
+        )
+        cd4_mean = subject_freq[subject_freq.population == "cd4_t_cell"].set_index(
+            ["subject", "response"]
+        )["percentage"]
+        features = pd.DataFrame(
+            {
+                "b_cell_change_day14": b_cell[14] - b_cell[0],
+                "cd4_t_cell_mean": cd4_mean,
+            }
+        ).reset_index()
+
+        y = features.response == "yes"
+        models = {
+            "baseline (most common class)": (
+                DummyClassifier(strategy="most_frequent"),
+                ["b_cell_change_day14"],
+            ),
+            "B cell change": (
+                make_pipeline(StandardScaler(), LogisticRegression()),
+                ["b_cell_change_day14"],
+            ),
+            "B cell change + CD4 mean": (
+                make_pipeline(StandardScaler(), LogisticRegression()),
+                ["b_cell_change_day14", "cd4_t_cell_mean"],
+            ),
+        }
+        cv = RepeatedStratifiedKFold(n_splits=5, n_repeats=10, random_state=0)
+        metrics = ["roc_auc", "accuracy", "balanced_accuracy", "precision", "recall"]
+
+        rows = []
+        for name, (model, columns) in models.items():
+            scores = cross_validate(model, features[columns], y, cv=cv, scoring=metrics)
+            row = {"model": name}
+            for metric in metrics:
+                row[f"{metric}_mean"] = scores[f"test_{metric}"].mean()
+                row[f"{metric}_std"] = scores[f"test_{metric}"].std()
+            rows.append(row)
+
+        return pd.DataFrame(rows)
+
+    classifier_scores = response_classifier_scores()
+
+    classifier_scores
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Part 3 Results
+
+    **Initial Analysis:**
+    When we look at the average relative population frequencies for each subject across days 0, 7, and 14, a Mann-Whitney U test indicates that the difference in CD4 T-cell frequencies is significant ($p = 0.012$). However, when we adjust for the fact that we are running 5 tests (so the chance of a false discovery is higher), we find that none of the test results are significant ($p=0.06$ for the CD4 T-cell population).
+
+    **Change from Baseline:**
+    If we instead look at the difference between baseline and day 14 values, we find that even after correcting the p-values, the difference in B-cell frequency between responders and non-responders is statistically significant (adjusted $p=0.03$). The median change in B-cell frequency among responders is approximately $-1$ percent, while it is $+0.15$ percent for non-responders.
+
+    **Conclusion:**
+    If response is assessed after day 14, an early drop in B-cell frequency is the most promising candidate predictor of response to miraclib, with CD4 T-cell frequency second. When we try building a classifier with these features, we find the results are not much better than guessing (AUC = 0.58). Since we chose these features based on tests on the same dataset, we should evaluate the choice in a new group of patients before using them to build a classifier.
+    """)
     return
 
 
@@ -249,16 +442,19 @@ def _(DATABASE_PATH, pd, sqlite3):
 def _(part4_target_samples):
     def part4_summary():
         samples_per_project = part4_target_samples.groupby(by='project').size()
+
+        # Note: for these filters, we know that each sample represents one subject because 
+        # we previously filtered for only baseline values
         samples_per_response_group = part4_target_samples.groupby(by='response').size()
         samples_per_sex = part4_target_samples.groupby(by='sex').size()
 
         print(f"Distribution of samples across projects:")
         print(samples_per_project)
-    
-        print(f"\nDistribution of samples across response:")
+
+        print(f"\nDistribution of subjects across response:")
         print(samples_per_response_group)
-    
-        print(f"\nDistribution of samples across sex:")
+
+        print(f"\nDistribution of subjects across sex:")
         print(samples_per_sex)
 
     part4_summary()

@@ -2,7 +2,7 @@
 
 ## Part 1: Data Management
 
-For the schema design, I split the data into primary two tables to avoid potential redundancy issues. 
+For the schema design, I split the data into two primary tables to avoid potential redundancy issues. 
 
 Each subject is associated with three samples, so it is best practice to have the samples in a separate table and have them point to the associated subject.
 
