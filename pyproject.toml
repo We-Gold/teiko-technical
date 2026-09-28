@@ -25,6 +25,8 @@ dev = [
 [tool.ruff]
 line-length = 88
 target-version = "py313"
+# Marimo notebooks
+extend-exclude = ["analysis.py", "dashboard.py"]
 
 [tool.ruff.lint]
 select = [

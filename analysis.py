@@ -6,11 +6,12 @@ app = marimo.App(width="medium")
 
 @app.cell
 def _():
-    import marimo as mo
-    from pathlib import Path
     import sqlite3
-    import pandas as pd
+    from pathlib import Path
+
     import altair as alt
+    import marimo as mo
+    import pandas as pd
     from scipy.stats import false_discovery_control, mannwhitneyu
     from sklearn.dummy import DummyClassifier
     from sklearn.linear_model import LogisticRegression
@@ -60,7 +61,18 @@ def _(Path):
 
 
 @app.cell
-def _(DATABASE_PATH, pd, sqlite3):
+def _(DATABASE_PATH, sqlite3):
+    def save_result(df, table_name):
+        # Store a result table in the database so the dashboard can read it
+        conn = sqlite3.connect(DATABASE_PATH)
+        df.to_sql(table_name, conn, if_exists="replace", index=False)
+        conn.close()
+
+    return (save_result,)
+
+
+@app.cell
+def _(DATABASE_PATH, pd, save_result, sqlite3):
     def find_cell_frequency():
         conn = sqlite3.connect(DATABASE_PATH)
 
@@ -84,6 +96,7 @@ def _(DATABASE_PATH, pd, sqlite3):
         return result
 
     cell_freq = find_cell_frequency()
+    save_result(cell_freq, "result_cell_frequency")
 
     cell_freq
     return (cell_freq,)
@@ -143,12 +156,13 @@ def _(cell_freq, response_samples):
 
 
 @app.cell
-def _(response_freq):
+def _(response_freq, save_result):
     # Average each subject's samples so every subject contributes one independent
     # value per population to the test (instead of 3)
     subject_freq = response_freq.groupby(
         ["subject", "response", "population"], as_index=False
     )["percentage"].mean()
+    save_result(subject_freq, "result_subject_frequency")
 
     subject_freq
     return (subject_freq,)
@@ -186,7 +200,7 @@ def _(mo):
 
 
 @app.cell
-def _(false_discovery_control, mannwhitneyu, pd, subject_freq):
+def _(false_discovery_control, mannwhitneyu, pd, save_result, subject_freq):
     def mann_whitney_by_population(df):
         rows = []
         for population, group in df.groupby("population"):
@@ -216,6 +230,7 @@ def _(false_discovery_control, mannwhitneyu, pd, subject_freq):
         return results
 
     mwu_results = mann_whitney_by_population(subject_freq)
+    save_result(mwu_results, "result_mann_whitney")
 
     mwu_results
     return
@@ -240,7 +255,7 @@ def _(mo):
 
 
 @app.cell
-def _(false_discovery_control, mannwhitneyu, pd, response_freq):
+def _(false_discovery_control, mannwhitneyu, pd, response_freq, save_result):
     def change_from_baseline_tests(df):
         # One row per subject and population, one column per day
         by_day = df.pivot_table(
@@ -277,6 +292,7 @@ def _(false_discovery_control, mannwhitneyu, pd, response_freq):
         return results
 
     change_results = change_from_baseline_tests(response_freq)
+    save_result(change_results, "result_change_from_baseline")
 
     change_results
     return
@@ -311,6 +327,7 @@ def _(
     make_pipeline,
     pd,
     response_freq,
+    save_result,
     subject_freq,
 ):
     def response_classifier_scores():
@@ -360,6 +377,7 @@ def _(
         return pd.DataFrame(rows)
 
     classifier_scores = response_classifier_scores()
+    save_result(classifier_scores, "result_classifier_scores")
 
     classifier_scores
     return
@@ -401,7 +419,7 @@ def _(mo):
 
 
 @app.cell
-def _(DATABASE_PATH, pd, sqlite3):
+def _(DATABASE_PATH, pd, save_result, sqlite3):
     def find_part4_target_samples():
         conn = sqlite3.connect(DATABASE_PATH)
 
@@ -433,36 +451,45 @@ def _(DATABASE_PATH, pd, sqlite3):
         return result
 
     part4_target_samples = find_part4_target_samples()
+    save_result(part4_target_samples, "result_part4_baseline_samples")
 
     part4_target_samples
     return (part4_target_samples,)
 
 
 @app.cell
-def _(part4_target_samples):
+def _(mo, part4_target_samples, save_result):
     def part4_summary():
-        samples_per_project = part4_target_samples.groupby(by='project').size()
+        samples_per_project = (
+            part4_target_samples.groupby("project").size().reset_index(name="n_samples")
+        )
 
-        # Note: for these filters, we know that each sample represents one subject because 
-        # we previously filtered for only baseline values
-        samples_per_response_group = part4_target_samples.groupby(by='response').size()
-        samples_per_sex = part4_target_samples.groupby(by='sex').size()
+        # Count distinct subjects so the counts stay correct even if a subject
+        # has more than one baseline sample
+        subjects_per_response = (
+            part4_target_samples.groupby("response")["subject_id"]
+            .nunique()
+            .reset_index(name="n_subjects")
+        )
+        subjects_per_sex = (
+            part4_target_samples.groupby("sex")["subject_id"]
+            .nunique()
+            .reset_index(name="n_subjects")
+        )
 
-        print(f"Distribution of samples across projects:")
-        print(samples_per_project)
+        return samples_per_project, subjects_per_response, subjects_per_sex
 
-        print(f"\nDistribution of subjects across response:")
-        print(samples_per_response_group)
+    samples_per_project, subjects_per_response, subjects_per_sex = part4_summary()
+    save_result(samples_per_project, "result_part4_samples_per_project")
+    save_result(subjects_per_response, "result_part4_subjects_per_response")
+    save_result(subjects_per_sex, "result_part4_subjects_per_sex")
 
-        print(f"\nDistribution of subjects across sex:")
-        print(samples_per_sex)
-
-    part4_summary()
+    mo.hstack([samples_per_project, subjects_per_response, subjects_per_sex])
     return
 
 
 @app.cell
-def _(DATABASE_PATH, pd, sqlite3):
+def _(DATABASE_PATH, pd, save_result, sqlite3):
     def find_melanoma_male_b_cells():
         conn = sqlite3.connect(DATABASE_PATH)
 
@@ -484,7 +511,10 @@ def _(DATABASE_PATH, pd, sqlite3):
 
         return result
 
-    find_melanoma_male_b_cells()
+    melanoma_male_b_cells = find_melanoma_male_b_cells()
+    save_result(melanoma_male_b_cells, "result_part4_avg_b_cells")
+
+    melanoma_male_b_cells
     return
 
 

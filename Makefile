@@ -5,9 +5,13 @@ setup:
 
 pipeline:
 	uv run python load_data.py
+	uv run python analysis.py
+
+view-analysis: 
+	uv run marimo edit analysis.py --host 0.0.0.0 --port 2717 --headless --no-token
 
 dashboard:
-	@echo "TODO: start dashboard server"
+	uv run marimo run dashboard.py --host 0.0.0.0 --port 2718 --headless
 
 lint:
 	uv run ruff check .
