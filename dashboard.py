@@ -154,7 +154,7 @@ def _(alt, mo, results):
             mo.ui.table(change_from_baseline.round(4), selection=None),
             mo.md(
                 "### Classifier performance\n"
-                "Logistic regression, evaluated with stratified 5-fold cross-validation."
+                "A logistic regression model evaluated with stratified 5-fold cross-validation with 10 repetitions."
             ),
             mo.ui.table(classifier_scores.round(3), selection=None),
         ]

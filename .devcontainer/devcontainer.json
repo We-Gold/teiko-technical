@@ -1,0 +1,21 @@
+{
+  "name": "Loblaw Bio Analysis",
+  "image": "mcr.microsoft.com/devcontainers/python:3.13",
+  "postCreateCommand": "make setup",
+  "forwardPorts": [2718, 2717],
+  "portsAttributes": {
+    "2718": {
+      "label": "Dashboard",
+      "onAutoForward": "openBrowser"
+    },
+    "2717": {
+      "label": "Analysis notebook",
+      "onAutoForward": "notify"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-python.python", "charliermarsh.ruff"]
+    }
+  }
+}

@@ -1,7 +1,7 @@
 [project]
 name = "teiko-technical"
 version = "0.1.0"
-description = "Add your description here"
+description = "Immune cell population analysis for the Loblaw Bio miraclib trial"
 readme = "README.md"
 authors = [
     { name = "Weaver Goldman", email = "we.goldm@gmail.com" }

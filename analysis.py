@@ -56,7 +56,7 @@ def _(mo):
 
 @app.cell
 def _(Path):
-    DATABASE_PATH = Path("cell-counts.db")
+    DATABASE_PATH = Path(__file__).parent / "cell-counts.db"
     return (DATABASE_PATH,)
 
 

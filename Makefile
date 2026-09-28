@@ -1,29 +1,33 @@
-.PHONY: setup pipeline dashboard lint format format-check typecheck check
+.PHONY: setup pipeline view-analysis dashboard lint format format-check typecheck check
+
+# Use uv from PATH if available, otherwise fall back to the pip-installed module
+UV := $(shell command -v uv 2>/dev/null || echo python3 -m uv)
 
 setup:
-	uv sync
+	command -v uv >/dev/null 2>&1 || python3 -m pip install uv
+	$(UV) sync
 
 pipeline:
-	uv run python load_data.py
-	uv run python analysis.py
+	$(UV) run python load_data.py
+	$(UV) run python analysis.py
 
-view-analysis: 
-	uv run marimo edit analysis.py --host 0.0.0.0 --port 2717 --headless --no-token
+view-analysis:
+	$(UV) run marimo edit analysis.py --host 0.0.0.0 --port 2717 --headless --no-token
 
 dashboard:
-	uv run marimo run dashboard.py --host 0.0.0.0 --port 2718 --headless
+	$(UV) run marimo run dashboard.py --host 0.0.0.0 --port 2718 --headless
 
 lint:
-	uv run ruff check .
+	$(UV) run ruff check .
 
 format:
-	uv run ruff format .
-	uv run ruff check --fix .
+	$(UV) run ruff format .
+	$(UV) run ruff check --fix .
 
 format-check:
-	uv run ruff format --check .
+	$(UV) run ruff format --check .
 
 typecheck:
-	uv run pyrefly check
+	$(UV) run pyrefly check
 
 check: format-check lint typecheck
